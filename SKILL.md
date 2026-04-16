@@ -38,6 +38,9 @@ When invoked as `/cost-watchdog [command]`:
 | `reset` | Reset session tracking counters |
 | `audit <file>` | Audit a file/codebase for cost risks (runaway loops, missing limits) |
 | `price <model>` | Look up current pricing for a specific model |
+| `visualize` | Generate cost charts and breakdowns (daily/weekly) |
+| `alternatives <model>` | Suggest cheaper model alternatives with savings % |
+| `learn <task_type> <cost> <tokens>` | Learn from completed task to improve estimates |
 | (no command) | Auto-detect: estimate if pre-execution, report if post-execution |
 
 ## 4. Core Instructions
@@ -158,14 +161,146 @@ When the user asks about pricing or when estimating costs:
 - Factor in prompt caching discounts where applicable
 - Include both pay-as-you-go and batch pricing when available
 
+### G. Visualize Cost Data (NEW v2.1)
+
+Generate visual reports and breakdowns when requested:
+
+**Daily/Weekly Reports:**
+```
+📊 Daily Cost Report - 2026-04-16
+══════════════════════════════════════════════════════
+💰 Total Cost: $2.45
+📝 Total Sessions: 12
+🔢 Total Tokens: 145,000
+📈 Daily Average: $0.20 per session
+
+──────────────────────────────────────────────────────
+🏆 Top 5 Most Expensive Tasks:
+──────────────────────────────────────────────────────
+1. Document summarization       $0.85
+2. Code review batch            $0.62
+3. Translation job              $0.45
+4. Chat session                 $0.33
+5. Image analysis               $0.20
+
+──────────────────────────────────────────────────────
+📊 Provider Breakdown:
+──────────────────────────────────────────────────────
+  claude          $1.85 (8 sessions)
+  openai          $0.45 (3 sessions)
+  groq            $0.15 (1 session)
+══════════════════════════════════════════════════════
+```
+
+**ASCII Cost Charts:**
+```
+📊 Top Tasks by Cost
+══════════════════════════════════════════════════════
+Document summarization  ████████████████████ $0.85
+Code review batch       ██████████████ $0.62
+Translation job         ██████████ $0.45
+Chat session            ███████ $0.33
+Image analysis          ████ $0.20
+══════════════════════════════════════════════════════
+```
+
+**Provider Comparison:**
+```
+📊 Cost by Provider (Last 7 Days)
+══════════════════════════════════════════════════════
+  claude          $12.45 (24 sessions)
+  openai          $8.30 (15 sessions)
+  groq            $2.15 (42 sessions)
+  gemini          $1.20 (8 sessions)
+  perplexity      $0.85 (5 sessions)
+══════════════════════════════════════════════════════
+```
+
+**Usage:**
+- `/cost-watchdog visualize daily` - Show today's spending
+- `/cost-watchdog visualize weekly` - Show last 7 days
+- `/cost-watchdog visualize chart` - ASCII bar chart
+- `/cost-watchdog visualize providers` - Breakdown by provider
+
+### H. Smart Budgeting (NEW v2.1)
+
+**Auto-adjust budgets based on task priority:**
+```
+/cost-watchdog set-budget 5.00 --priority=high
+
+Budget adjusted: $5.00 × 1.5 (high priority) = $7.50
+```
+
+**Learn from past spending patterns:**
+```
+/cost-watchdog learn document-summarization 0.85 120000 15
+
+✅ Learned: document-summarization
+   Avg cost: $0.85, Avg tokens: 120K, Avg duration: 15min
+   Confidence: 75% (based on 8 samples)
+```
+
+**Get smarter estimates:**
+```
+/cost-watchdog estimate document-summarization 150000
+
+💰 Estimate for document-summarization:
+   Cost: $0.92 (learned from 8 previous tasks)
+   Confidence: 75%
+   Range: $0.65 - $1.25 (based on std dev)
+```
+
+**Suggest cheaper alternatives:**
+```
+/cost-watchdog alternatives claude-sonnet-4.5 --savings=50
+
+💡 Cheaper alternatives to claude-sonnet-4.5 (>50% savings):
+   • claude-haiku-4.5: Save 73%
+     Trade-off: Much faster, lower quality for complex tasks
+   • gpt-4o-mini: Save 87%
+     Trade-off: Good for simple tasks, less capable on complex reasoning
+   • groq-llama-3.2-8b: Save 94%
+     Trade-off: Very fast, good for simple tasks
+```
+
+**Priority-based budget multipliers:**
+| Priority | Multiplier | Use Case |
+|----------|-----------|----------|
+| low | 0.5× | Experiments, testing |
+| medium | 1.0× | Normal work |
+| high | 1.5× | Important deliverables |
+| critical | 2.0× | Production, deadlines |
+
+### I. Provider Coverage (NEW v2.1)
+
+**Supported providers:**
+- **Anthropic** - Claude Opus, Sonnet, Haiku (all versions)
+- **OpenAI** - GPT-4o, GPT-4.1, o3/o4 series, mini models
+- **Google** - Gemini 2.5 Pro/Flash, Gemini 2.0 Flash
+- **Mistral** - Large, Small, Codestral, Embed
+- **Cohere** - Command R+, Command R, Embed
+- **Groq** - Llama 3.1/3.2, Mixtral, Gemma, DeepSeek
+- **DeepSeek** - R1, V3, Coder V2, LLM
+- **Perplexity** - Sonar Pro, Sonar, Small
+- **OpenRouter** - Aggregated models (auto-routing)
+
+**Total models covered:** 50+ models across 9 providers
+
 ## 5. Reference Files
 
 | File | Purpose |
 |------|---------|
-| [references/pricing.md](references/pricing.md) | Current API pricing for major LLM providers |
+| [references/pricing.md](references/pricing.md) | Current API pricing for 9 providers, 50+ models |
 | [references/optimization.md](references/optimization.md) | Cost optimization strategies and patterns |
 | [references/patterns.md](references/patterns.md) | Common dangerous patterns and their safe alternatives |
 | [references/calculators.md](references/calculators.md) | Token counting methods and cost calculation formulas |
+
+## 6. Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/cost-visualizer.py` | Generate cost charts, reports, and breakdowns |
+| `scripts/smart-budget.py` | Smart budgeting with learning and auto-adjustment |
 
 ## 6. Quick Examples
 

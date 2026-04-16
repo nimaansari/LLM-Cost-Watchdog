@@ -63,6 +63,95 @@
 | Command R | $0.15 | $0.60 | 128K |
 | Embed v3 | $0.10 | — | 512 |
 
+## Groq
+
+> Ultra-fast inference with open-source models. Pricing is very competitive.
+
+| Model | Input (per 1M tokens) | Output (per 1M tokens) | Context |
+|-------|----------------------|------------------------|---------|
+| Llama 3.1 405B | $2.50 | $10.00 | 128K |
+| Llama 3.1 70B | $0.59 | $0.79 | 128K |
+| Llama 3.1 8B | $0.05 | $0.08 | 128K |
+| Llama 3.2 90B Vision | $0.90 | $0.90 | 128K |
+| Llama 3.2 11B Vision | $0.18 | $0.18 | 128K |
+| Mixtral 8x7B | $0.24 | $0.24 | 32K |
+| Gemma 2 9B | $0.10 | $0.10 | 8K |
+| DeepSeek-R1 | $0.14 | $0.28 | 64K |
+| DeepSeek-V3 | $0.14 | $0.28 | 64K |
+
+**Notes:**
+- Groq uses per-second billing for some models, token pricing shown is equivalent
+- Extremely fast inference (100+ tokens/sec typical)
+- Free tier available for testing with rate limits
+
+## DeepSeek
+
+> Chinese LLM provider with competitive pricing and strong reasoning capabilities.
+
+| Model | Input (per 1M tokens) | Output (per 1M tokens) | Context |
+|-------|----------------------|------------------------|---------|
+| DeepSeek-R1 | $0.55 | $2.19 | 64K |
+| DeepSeek-V3 | $0.14 | $0.28 | 64K |
+| DeepSeek-Coder V2 | $0.14 | $0.28 | 128K |
+| DeepSeek-LLM | $0.13 | $0.13 | 16K |
+
+**Notes:**
+- DeepSeek-R1: reasoning model, output tokens billed at higher rate
+- Cache hit: $0.014 input (90% discount)
+- Strong code generation capabilities
+
+## Perplexity
+
+> Search-enhanced models with real-time web knowledge.
+
+| Model | Input (per 1M tokens) | Output (per 1M tokens) | Context |
+|-------|----------------------|------------------------|---------|
+| Sonar Pro (3.5 Sonnet) | $3.00 | $15.00 | 200K |
+| Sonar (70B) | $1.00 | $1.00 | 128K |
+| Sonar Small (8B) | $0.20 | $0.20 | 128K |
+| Pro (Claude 3.5 Sonnet) | $3.00 | $15.00 | 200K |
+
+**Notes:**
+- Includes real-time web search in responses
+- Search queries may incur additional costs
+- Good for research and fact-checking tasks
+
+## OpenRouter (Aggregated Models)
+
+> OpenRouter aggregates multiple providers. Prices vary by model and routing.
+
+| Model | Input (per 1M tokens) | Output (per 1M tokens) | Notes |
+|-------|----------------------|------------------------|-------|
+| Claude 3.5 Sonnet | $3.00 | $15.00 | Via Anthropic |
+| Claude 3 Opus | $15.00 | $75.00 | Via Anthropic |
+| Llama 3.1 405B | $2.50 | $10.00 | Via Groq/Together |
+| Llama 3.1 70B | $0.59 | $0.79 | Via Groq |
+| Mistral Large | $2.00 | $6.00 | Via Mistral |
+| Gemini 2.0 Flash | $0.10 | $0.40 | Via Google |
+| Qwen 2.5 72B | $0.40 | $0.40 | Via various |
+| Yi-Large | $1.20 | $1.20 | Via various |
+| Command R+ | $2.50 | $10.00 | Via Cohere |
+| **Free tier models** | $0.00 | $0.00 | Limited availability |
+
+**Notes:**
+- OpenRouter routes to cheapest available provider
+- Free tier models available (limited, lower quality)
+- Some models have rate limits on free tier
+- Check current routing at [openrouter.ai/docs](https://openrouter.ai/docs)
+
+## Cost Comparison: Cheapest Options by Category
+
+| Use Case | Cheapest Model | Cost (1M input + 100K output) |
+|----------|----------------|-------------------------------|
+| **Simple classification** | GPT-4.1-nano | $0.14 |
+| **Code generation** | DeepSeek-Coder V2 | $0.17 |
+| **Fast responses** | Groq Llama 3.2 8B | $0.06 |
+| **Research with search** | Perplexity Sonar Small | $0.22 |
+| **Reasoning tasks** | DeepSeek-V3 | $0.17 |
+| **High quality general** | Gemini 2.0 Flash | $0.14 |
+| **Best value premium** | Claude Haiku 4.5 | $1.20 |
+| **Top tier quality** | Claude Sonnet 4.6 | $4.50 |
+
 ## Embedding Models (Comparison)
 
 | Provider | Model | Price (per 1M tokens) | Dimensions | Context |
