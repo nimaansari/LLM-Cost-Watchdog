@@ -1,365 +1,213 @@
 ---
 name: cost-watchdog
-description: Monitors API spend per task, flags runaway loops, and estimates cost before executing expensive operations. Activate when working with AI agents, API calls, token-heavy workflows, or when the user mentions cost, budget, spend, pricing, tokens, or billing.
-when_to_use: "TRIGGER when: user mentions API costs, token usage, budget, billing, spend tracking; code involves API calls to LLM providers (OpenAI, Anthropic, Google, Cohere, Mistral); user is running or building AI agents; user asks to estimate cost of an operation; code has loops calling external APIs; user mentions OpenClaw, AutoGen, CrewAI, LangChain, or similar agent frameworks."
-argument-hint: "[command] — e.g., estimate, report, set-budget, check, reset"
+description: Tracks LLM spend across providers live, detects runaway loops, enforces budgets. Triggers on: cost/budget/token mentions, LLM API calls, agent workflows, batch processing.
+when_to_use: "TRIGGER when: cost/budget/token mentions, LLM API calls in code, agent loops, batch processing, or `/cost-watchdog` commands."
+argument-hint: "[command] — session, tail, detect, audit, price, estimate, alternatives, report, errors, validate-tokens, reset"
 metadata: {"openclaw": {"emoji": "💰"}}
 ---
 
-# Cost Watchdog
+# Cost Watchdog 💰
 
-> A capability layer that tracks, estimates, and guards against runaway API spending in AI agent workflows.
+> Real-time cost tracking layer for LLM-based agents. Prices every call live,
+> detects runaway loops in code, enforces budget ceilings mid-execution.
 
 ## 1. Identity
 
-You are a cost-awareness layer — not a billing dashboard or accounting tool. You enhance every AI agent workflow with spend visibility and protection. You prevent the $2,400-overnight-loop problem by making cost a first-class concern in agent design and execution.
+Observes LLM spend without disturbing the agent. Prevents `$2,400-overnight-loop`
+disasters by making cost a first-class concern: priced at write time,
+budgeted at check time, surfaced in reports.
 
 ## 2. Triggers
 
-Activate this skill when:
+Activate when:
 
-- User is building or running AI agents (AutoGen, CrewAI, LangChain, OpenClaw, etc.)
-- Code makes API calls to LLM providers (OpenAI, Anthropic, Google, Mistral, Cohere, etc.)
-- User asks about cost, budget, tokens, billing, or spend
-- A loop or recursive pattern calls an external API
-- User invokes `/cost-watchdog` with a command
-- User is about to execute a potentially expensive operation (batch processing, bulk embeddings, multi-agent orchestration)
+- User mentions cost, budget, tokens, billing.
+- Code contains LLM API calls (Anthropic, OpenAI, OpenRouter, Google, Groq, ...).
+- Agent loops or recursive workflows.
+- Batch / streaming processing with unclear bounds.
+- `/cost-watchdog [command]` is invoked.
 
 ## 3. Commands
 
-When invoked as `/cost-watchdog [command]`:
+Run via `python3 scripts/cost_watchdog.py <cmd>` (or hook into your own CLI).
 
-| Command | Action |
-|---------|--------|
-| `estimate` | Estimate cost of the current task or a described operation |
-| `report` | Generate a spend report for the current session/project |
-| `set-budget <amount>` | Set a cost ceiling for the current session (e.g., `set-budget 5.00`) |
-| `check` | Check current estimated spend against budget |
-| `reset` | Reset session tracking counters |
-| `audit <file>` | Audit a file/codebase for cost risks (runaway loops, missing limits) |
-| `price <model>` | Look up current pricing for a specific model |
-| `visualize` | Generate cost charts and breakdowns (daily/weekly) |
-| `alternatives <model>` | Suggest cheaper model alternatives with savings % |
-| `learn <task_type> <cost> <tokens>` | Learn from completed task to improve estimates |
-| (no command) | Auto-detect: estimate if pre-execution, report if post-execution |
+| Command | What it does |
+|---|---|
+| `session` | Spend totals from `usage.jsonl` — calls, tokens, cost, top models. |
+| `report` | 24h / 7d / 30d windows with top model per window. |
+| `tail [--once]` | Watch OpenClaw session JSONL and log every assistant turn. |
+| `detect [--json]` | Identify which model the agent is currently using (5 probes). |
+| `audit <file.py>` | AST-based code risk scan: unbounded loops, recursion, missing `max_tokens`. |
+| `price <model>` | Live pricing for one model, with source + cache age. |
+| `estimate <model>` | Project cost for `n` iterations of a given call. |
+| `alternatives <model>` | Cheaper same-unit models. |
+| `errors [--limit N]` | Recent swallowed exceptions (silent failures made visible). |
+| `validate-tokens <model>` | Compare our heuristic against provider's authoritative count. |
+| `reset [--all]` | Clear current-day log (`--all` also clears rolled files). |
 
-## 4. Core Instructions
+## 4. Pricing layer
 
-### A. Always Estimate Before Expensive Operations
-
-Before executing or recommending any operation that involves API calls, provide a cost estimate:
+### Source chain
 
 ```
-💰 Cost Estimate
-├── Model: gpt-4o
-├── Est. input tokens: ~12,000
-├── Est. output tokens: ~3,000
-├── Per-call cost: ~$0.045
-├── Iterations: 5
-├── Total estimate: ~$0.225
-└── Confidence: medium (depends on output length)
+openrouter/*            → OpenRouter API (live)           → static fallback
+anything else           → LiteLLM JSON (live, cached 24h) → OpenRouter (permissive) → static fallback
 ```
 
-**Rules:**
-- Use the pricing tables in [references/pricing.md](references/pricing.md) for calculations
-- Always show per-call AND total cost
-- Include confidence level: `high` (fixed input), `medium` (variable output), `low` (recursive/unknown iterations)
-- For agent loops, estimate a range: best-case (converges fast) to worst-case (hits max iterations)
-- When confidence is `low`, recommend setting a hard budget cap
+- **2600+ models** indexed across chat, completion, embedding, image, audio,
+  video, rerank, OCR, search modes.
+- **30+ providers** in the static fallback: Anthropic, OpenAI, Google,
+  Groq, Mistral, Cohere, DeepSeek, Perplexity, xAI, Bedrock, Azure, and more.
+- Unit-aware: `token`, `image`, `second`, `query`, `page`, `character`,
+  `pixel`. Alternatives never compare across units.
+- **Circuit breaker** opens after 3 consecutive network failures for a host;
+  falls through to cache/static until the cool-down ends (60s).
 
-### B. Flag Runaway Loop Risks
+### Tuning
 
-Scan code for these dangerous patterns and flag them immediately:
+| Env var | Default | Effect |
+|---|---|---|
+| `CW_PRICE_TTL_SECONDS` | 86400 (24h) | Cache lifetime. `0` = hit network every call. |
+| `CW_OFFLINE` | unset | If `1`, never touch the network. |
+| `CW_STATIC_ONLY` | unset | If `1`, skip live sources entirely. Used by tests. |
+| `CW_LOG_DIR` | `~/.cost-watchdog` | Where usage/errors/cache files live. |
+| `CW_BUDGET_USD` | unset | Ceiling; wrappers raise `BudgetExceeded` when crossed. |
 
-| Pattern | Risk Level | Description |
-|---------|-----------|-------------|
-| `while True` + API call | CRITICAL | Infinite loop with no cost ceiling |
-| Recursive agent calls without depth limit | CRITICAL | Exponential cost growth |
-| Retry logic without max attempts | HIGH | Failed calls keep spending |
-| Agent-to-agent delegation without budget passing | HIGH | Each agent spends independently |
-| Batch processing without chunking/checkpointing | MEDIUM | No way to stop mid-run |
-| Missing `max_tokens` on completions | MEDIUM | Model may generate maximum output |
-| No timeout on API calls | LOW | Hung connections don't cost, but block |
-
-When a risk is found, output:
+### Refresh static pricing
 
 ```
-⚠️  COST RISK: [risk level]
-├── File: path/to/file.py:42
-├── Pattern: while loop calling openai.chat.completions.create() with no iteration limit
-├── Worst case: unlimited API calls at ~$0.03/call
-├── Fix: Add max_iterations parameter with default of 10
-└── Safe version: [show corrected code snippet]
+python3 scripts/refresh_pricing.py
 ```
+Regenerates `references/pricing.md` from the live sources so the offline
+fallback is fresh. Aborts if fewer than 100 rows came back (protects
+against clobbering on a network outage).
 
-### C. Track Session Spend
+## 5. Tracking layer — how we know what was spent
 
-Maintain a running mental model of costs incurred during the session:
+Four independent paths, all write to `~/.cost-watchdog/usage.jsonl`:
 
-- Count API calls made or recommended
-- Estimate tokens consumed (input + output)
-- Compare against budget if one is set
-- Warn at 50%, 80%, and 95% of budget
+| Path | When to use | Covers streams? |
+|---|---|---|
+| `openclaw_tailer.py --watch` | Running OpenClaw. Zero code changes. | yes (reads completed turns) |
+| `track_openai(client)` | You call OpenAI-compatible SDK (covers OpenRouter, Groq, DeepSeek, Mistral, Together, Fireworks, Cerebras, Anyscale, ...). | yes (tee'd iterator, auto-injects `stream_options={"include_usage": True}`) |
+| `track_anthropic(client)` | Direct Anthropic SDK. | yes (wraps `messages.stream()`) |
+| `track_gemini(model)` / `track_cohere(client)` / `track_bedrock(client)` | Direct provider SDKs. | no (add wrappers if you need streams) |
+| `install_global_capture()` (httpx) | Any modern Python SDK using httpx. | **no** — streams are flagged into `errors.jsonl` so the gap is visible. Use the SDK wrappers for stream coverage. |
 
-**Budget warning format:**
+Usage log rotates daily: `usage.YYYY-MM-DD.jsonl`. `session_total(since=...)`
+skips files outside the window before scanning.
 
-```
-💰 Budget Alert: 80% consumed
-├── Budget: $5.00
-├── Estimated spend: ~$4.02
-├── Remaining: ~$0.98
-├── Calls made: 47
-└── Recommendation: consider reducing scope or switching to a cheaper model
-```
+Aggregation uses `canonical_family()` so
+`claude-haiku-4-5-20251001`, `claude-haiku-4-5`, and `claude-haiku-4.5`
+are one row in reports.
 
-### D. Recommend Cost-Optimization Strategies
+## 6. Budget enforcement
 
-When reviewing agent code or planning tasks, proactively suggest:
+Two mechanisms:
 
-1. **Model tiering** — Use cheaper models for simple tasks (classification, extraction), expensive models only for reasoning
-2. **Caching** — Cache identical prompts; use prompt caching features (Anthropic, OpenAI)
-3. **Batching** — Use batch APIs where available (50% cost reduction typical)
-4. **Early termination** — Stop agent loops when confidence is high enough
-5. **Token reduction** — Trim system prompts, compress context, use structured output
-6. **Rate limiting** — Self-imposed rate limits prevent burst spending
-7. **Checkpointing** — Save intermediate results so failures don't waste prior spend
+1. **Write-time check** (race-safe): `append_usage(entry, budget_ceiling=X)`
+   takes an `fcntl.flock` on a sidecar, sums the current session, and
+   refuses the write (raises `BudgetExceeded`) if the call would cross `X`.
+2. **Post-write check**: wrappers compare cumulative spend to `CW_BUDGET_USD`
+   after logging and raise if over. Used when the wrapper doesn't know the
+   ceiling at call time.
 
-See [references/optimization.md](references/optimization.md) for detailed strategies.
+Either path stops the agent mid-loop; the LLM call still returns to the
+caller, but the next one blocks.
 
-### E. Audit Codebases for Cost Safety
-
-When asked to audit, or when reviewing agent code, check for:
-
-1. **Hard limits exist** — `max_tokens`, `max_iterations`, `max_retries`, timeout
-2. **Budget enforcement** — Code tracks and enforces a spending ceiling
-3. **Graceful degradation** — What happens when budget is exhausted? Crash vs. fallback
-4. **Observability** — Are costs logged? Can you see spend per task/agent/user?
-5. **Model selection** — Is the most expensive model used everywhere, or is there tiering?
-6. **Prompt efficiency** — Are system prompts bloated? Is context window wasted?
-
-Output an audit scorecard:
+## 7. Code audit (AST)
 
 ```
-📋 Cost Safety Audit
-├── Hard limits:        ✅ max_tokens set on all calls
-├── Iteration caps:     ❌ agent loop has no max_iterations
-├── Budget enforcement: ❌ no budget tracking
-├── Error handling:     ⚠️  retries exist but no max_retries
-├── Observability:      ❌ no cost logging
-├── Model tiering:      ⚠️  using gpt-4o for all tasks including simple ones
-├── Prompt efficiency:  ✅ system prompts are concise
-└── Overall grade:      C — functional but unprotected against cost blowups
+python3 scripts/cost_watchdog.py audit path/to/agent.py
 ```
 
-### F. Provide Contextual Pricing
+Walks the AST and reports:
 
-When the user asks about pricing or when estimating costs:
+- **CRITICAL** — `while True` with an LLM call and no `max_iterations`-style bound.
+- **CRITICAL** — function that recurses and calls an LLM API with no depth argument.
+- **HIGH** — plain `while` that calls an API with no retry/iteration counter.
+- **MEDIUM** — LLM call missing `max_tokens` / `max_completion_tokens`.
+- **MEDIUM** — function with ≥5 sequential LLM calls (batching candidate).
 
-- Pull from [references/pricing.md](references/pricing.md) for current rates
-- Always note that prices change — include a "last updated" date
-- Compare models on price-to-performance ratio when relevant
-- Factor in prompt caching discounts where applicable
-- Include both pay-as-you-go and batch pricing when available
+Every finding has a file line number. No more `count('def ') > 3 and
+count('self.') > 5 → "recursion detected"` false positives.
 
-### G. Visualize Cost Data (NEW v2.1)
+## 8. Detection — "what model is the agent using?"
 
-Generate visual reports and breakdowns when requested:
-
-**Daily/Weekly Reports:**
 ```
-📊 Daily Cost Report - 2026-04-16
-══════════════════════════════════════════════════════
-💰 Total Cost: $2.45
-📝 Total Sessions: 12
-🔢 Total Tokens: 145,000
-📈 Daily Average: $0.20 per session
-
-──────────────────────────────────────────────────────
-🏆 Top 5 Most Expensive Tasks:
-──────────────────────────────────────────────────────
-1. Document summarization       $0.85
-2. Code review batch            $0.62
-3. Translation job              $0.45
-4. Chat session                 $0.33
-5. Image analysis               $0.20
-
-──────────────────────────────────────────────────────
-📊 Provider Breakdown:
-──────────────────────────────────────────────────────
-  claude          $1.85 (8 sessions)
-  openai          $0.45 (3 sessions)
-  groq            $0.15 (1 session)
-══════════════════════════════════════════════════════
+python3 scripts/cost_watchdog.py detect
 ```
 
-**ASCII Cost Charts:**
+Five probe layers, ranked by confidence:
+
+| Probe | Confidence |
+|---|---|
+| OpenClaw session JSONL | high |
+| Claude Code session JSONL | high |
+| Most recent usage-log entry | high |
+| Claude Code `settings.json` | medium |
+| Env vars (`ANTHROPIC_MODEL`, `OPENAI_MODEL`, ...) | medium |
+
+Emits a table or `--json`.
+
+## 9. Files
+
+| Path | Purpose |
+|---|---|
+| `scripts/_pricing.py` | Router: picks LiteLLM / OpenRouter / static per query. |
+| `scripts/_sources.py` | Three `PricingSource` classes + disk cache + circuit breaker. |
+| `scripts/tokenizer.py` | Provider-aware token counting (tiktoken for OpenAI; calibrated heuristics for others). |
+| `scripts/model_canon.py` | `canonical_family()` — collapses model variants. |
+| `scripts/code_audit.py` | AST cost-risk walker. |
+| `scripts/usage_log.py` | JSONL writer + rotation + aggregation. |
+| `scripts/tracker.py` | SDK wrappers + streaming + budget enforcement. |
+| `scripts/http_capture.py` | `install_global_capture()` — httpx transport hook. |
+| `scripts/openclaw_tailer.py` | Watches OpenClaw sessions. |
+| `scripts/detect_model.py` | Multi-layer detector. |
+| `scripts/errors.py` | `errors.jsonl` writer + reader. |
+| `scripts/io_utils.py` | `write_json_atomic` / `read_json`. |
+| `scripts/refresh_pricing.py` | Regenerates static `pricing.md` from live sources. |
+| `scripts/cost_watchdog.py` | Unified CLI dispatcher. |
+| `references/pricing.md` | Static fallback (regenerated; ~2600 models). |
+| `tests/test_cost_watchdog.py` | 73 tests: router, cache, AST, tokenizer, rotation, cassettes, circuit breaker, canonicalization. |
+
+## 10. Quality checklist
+
+- [x] Live pricing from LiteLLM + OpenRouter, 24h-cached, with static fallback.
+- [x] Exact-match model lookup (no substring conflation).
+- [x] Multi-modal (token / image / second / query / page / character).
+- [x] Unit-aware alternatives (never compares tokens to images).
+- [x] AST-based code audit with line numbers.
+- [x] Provider-aware tokenization (no more tiktoken-for-Claude).
+- [x] Variance-based confidence (no `+= 0.05` theater).
+- [x] Atomic writes to all shared state files.
+- [x] `fcntl.flock`-guarded budget check-and-log (no race).
+- [x] Circuit breaker on flaky networks (no 5s hang per call).
+- [x] Streaming capture via SDK wrappers; streams flagged in `errors.jsonl` via HTTP capture.
+- [x] Daily log rotation + date-scoped aggregation.
+- [x] Canonical model families (variants collapse in reports).
+- [x] `errors.jsonl` surfaces silent failures; `cost_watchdog errors` shows them.
+- [x] Cassette tests for LiteLLM + OpenRouter parse paths (schema-drift safety net).
+- [x] 73 logic tests passing.
+
+## 11. Known limits (be honest)
+
+- **Tokenizer heuristics** for Claude/Gemini/etc. are calibrated from docs,
+  not measured. Run `cost_watchdog validate-tokens <model>` to check drift
+  against the provider's authoritative count when you have an API key.
+- **`install_global_capture()` can't see streaming responses** — httpx exposes
+  an empty body until the user reads the stream. Use `track_openai` /
+  `track_anthropic` for stream coverage; `http_capture` logs skipped streams
+  to `errors.jsonl` so the gap is visible.
+- **Non-httpx SDKs** (older Cohere, boto3 with custom transport) need the
+  per-SDK wrappers — HTTP capture won't see them.
+- **LiteLLM community data** can lag 24-48h on brand-new models. OpenRouter's
+  API is truly live for anything it routes.
+
+## 12. Testing
+
 ```
-📊 Top Tasks by Cost
-══════════════════════════════════════════════════════
-Document summarization  ████████████████████ $0.85
-Code review batch       ██████████████ $0.62
-Translation job         ██████████ $0.45
-Chat session            ███████ $0.33
-Image analysis          ████ $0.20
-══════════════════════════════════════════════════════
+python3 -m unittest tests.test_cost_watchdog     # 73 tests
+python3 scripts/code_audit.py test_risky_code.py # sample risks
+python3 scripts/cost_watchdog.py report          # current spend summary
 ```
-
-**Provider Comparison:**
-```
-📊 Cost by Provider (Last 7 Days)
-══════════════════════════════════════════════════════
-  claude          $12.45 (24 sessions)
-  openai          $8.30 (15 sessions)
-  groq            $2.15 (42 sessions)
-  gemini          $1.20 (8 sessions)
-  perplexity      $0.85 (5 sessions)
-══════════════════════════════════════════════════════
-```
-
-**Usage:**
-- `/cost-watchdog visualize daily` - Show today's spending
-- `/cost-watchdog visualize weekly` - Show last 7 days
-- `/cost-watchdog visualize chart` - ASCII bar chart
-- `/cost-watchdog visualize providers` - Breakdown by provider
-
-### H. Smart Budgeting (NEW v2.1)
-
-**Auto-adjust budgets based on task priority:**
-```
-/cost-watchdog set-budget 5.00 --priority=high
-
-Budget adjusted: $5.00 × 1.5 (high priority) = $7.50
-```
-
-**Learn from past spending patterns:**
-```
-/cost-watchdog learn document-summarization 0.85 120000 15
-
-✅ Learned: document-summarization
-   Avg cost: $0.85, Avg tokens: 120K, Avg duration: 15min
-   Confidence: 75% (based on 8 samples)
-```
-
-**Get smarter estimates:**
-```
-/cost-watchdog estimate document-summarization 150000
-
-💰 Estimate for document-summarization:
-   Cost: $0.92 (learned from 8 previous tasks)
-   Confidence: 75%
-   Range: $0.65 - $1.25 (based on std dev)
-```
-
-**Suggest cheaper alternatives:**
-```
-/cost-watchdog alternatives claude-sonnet-4.5 --savings=50
-
-💡 Cheaper alternatives to claude-sonnet-4.5 (>50% savings):
-   • claude-haiku-4.5: Save 73%
-     Trade-off: Much faster, lower quality for complex tasks
-   • gpt-4o-mini: Save 87%
-     Trade-off: Good for simple tasks, less capable on complex reasoning
-   • groq-llama-3.2-8b: Save 94%
-     Trade-off: Very fast, good for simple tasks
-```
-
-**Priority-based budget multipliers:**
-| Priority | Multiplier | Use Case |
-|----------|-----------|----------|
-| low | 0.5× | Experiments, testing |
-| medium | 1.0× | Normal work |
-| high | 1.5× | Important deliverables |
-| critical | 2.0× | Production, deadlines |
-
-### I. Provider Coverage (NEW v2.1)
-
-**Supported providers:**
-- **Anthropic** - Claude Opus, Sonnet, Haiku (all versions)
-- **OpenAI** - GPT-4o, GPT-4.1, o3/o4 series, mini models
-- **Google** - Gemini 2.5 Pro/Flash, Gemini 2.0 Flash
-- **Mistral** - Large, Small, Codestral, Embed
-- **Cohere** - Command R+, Command R, Embed
-- **Groq** - Llama 3.1/3.2, Mixtral, Gemma, DeepSeek
-- **DeepSeek** - R1, V3, Coder V2, LLM
-- **Perplexity** - Sonar Pro, Sonar, Small
-- **OpenRouter** - Aggregated models (auto-routing)
-
-**Total models covered:** 50+ models across 9 providers
-
-## 5. Reference Files
-
-| File | Purpose |
-|------|---------|
-| [references/pricing.md](references/pricing.md) | Current API pricing for 9 providers, 50+ models |
-| [references/optimization.md](references/optimization.md) | Cost optimization strategies and patterns |
-| [references/patterns.md](references/patterns.md) | Common dangerous patterns and their safe alternatives |
-| [references/calculators.md](references/calculators.md) | Token counting methods and cost calculation formulas |
-
-## 6. Scripts
-
-| Script | Purpose |
-|--------|---------|
-| `scripts/cost-visualizer.py` | Generate cost charts, reports, and breakdowns |
-| `scripts/smart-budget.py` | Smart budgeting with learning and auto-adjustment |
-
-## 6. Quick Examples
-
-**Estimate a batch job:**
-```
-User: I want to summarize 500 documents with Claude Sonnet
-Assistant:
-💰 Cost Estimate
-├── Model: claude-sonnet-4-6
-├── Documents: 500
-├── Est. input tokens per doc: ~2,000 (avg document) + ~200 (system prompt)
-├── Est. output tokens per doc: ~500
-├── Per-doc cost: ~$0.0045
-├── Batch discount: 50% (if using batch API)
-├── Total (standard): ~$2.25
-├── Total (batch API): ~$1.12
-├── Time (batch): up to 24 hours
-└── Recommendation: use batch API, save ~$1.13
-```
-
-**Flag a dangerous loop:**
-```python
-# ❌ DANGEROUS — no iteration limit
-while not task.is_complete():
-    result = client.chat.completions.create(model="gpt-4o", ...)
-    task.update(result)
-
-# ✅ SAFE — capped at 20 iterations with budget tracking
-for i in range(max_iterations := 20):
-    if task.is_complete():
-        break
-    result = client.chat.completions.create(model="gpt-4o", max_tokens=1000, ...)
-    task.update(result)
-    cost_tracker.add(result.usage)
-    if cost_tracker.total > budget:
-        logger.warning(f"Budget exceeded at iteration {i}")
-        break
-```
-
-## 7. Quality Checklist
-
-Before completing any cost-related analysis, verify:
-
-- [ ] All estimates include the model name and pricing source
-- [ ] Token counts distinguish input vs. output (different rates)
-- [ ] Confidence level is stated (high/medium/low)
-- [ ] Ranges given for variable workloads (best/worst case)
-- [ ] Optimization suggestions included where applicable
-- [ ] Dangerous patterns flagged with specific file:line references
-- [ ] Budget warnings issued if a budget is set
-- [ ] Batch API alternatives mentioned for bulk operations
-- [ ] Prompt caching considered for repeated system prompts
-- [ ] "Last updated" date included with pricing data
-
-## 8. Testing Prompts
-
-- "Estimate how much it would cost to process 10,000 support tickets with GPT-4o"
-- "Audit this agent code for cost risks"
-- "Set a $10 budget for this session"
-- "What's cheaper for classification — Haiku or GPT-4o-mini?"
-- "This AutoGen agent ran up a $500 bill — help me add cost controls"
-- "Compare the cost of using Sonnet vs Opus for code review on a 1000-file repo"

@@ -6,30 +6,27 @@ and suggests cheaper alternatives.
 """
 
 import json
-import os
-from datetime import datetime, timedelta
+import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List
 from dataclasses import dataclass, asdict
 
+# Ensure sibling `_pricing` is importable regardless of CWD.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _pricing
+from io_utils import write_json_atomic, read_json
+
 DATA_DIR = Path.home() / ".cost-watchdog"
 DATA_DIR.mkdir(exist_ok=True)
 
-# Pricing reference (simplified for quick lookups)
-MODEL_PRICING = {
-    # Format: (input_per_1M, output_per_1M)
-    "claude-sonnet-4.5": (3.00, 15.00),
-    "claude-opus-4.6": (15.00, 75.00),
-    "claude-haiku-4.5": (0.80, 4.00),
-    "gpt-4o": (2.50, 10.00),
-    "gpt-4o-mini": (0.15, 0.60),
-    "gpt-4.1-nano": (0.10, 0.40),
-    "gemini-2.0-flash": (0.10, 0.40),
-    "gemini-2.5-flash": (0.15, 0.30),
-    "groq-llama-3.2-8b": (0.05, 0.08),
-    "deepseek-v3": (0.14, 0.28),
-    "perplexity-sonar-small": (0.20, 0.20),
-}
+
+def _model_prices(model: str) -> tuple:
+    """Return (input_per_1M, output_per_1M). Default Sonnet-tier if unknown."""
+    price = _pricing.get_price(model)
+    if price is None:
+        return (3.0, 15.0)
+    return (price.input_per_1m, price.output_per_1m)
 
 
 @dataclass
@@ -69,28 +66,16 @@ class SmartBudgetManager:
         self.patterns = self._load_patterns()
     
     def _load_config(self) -> Dict:
-        """Load budget configuration."""
-        if self.config_file.exists():
-            with open(self.config_file, 'r') as f:
-                return json.load(f)
-        return {"budgets": [], "settings": {}}
-    
+        return read_json(self.config_file, default={"budgets": [], "settings": {}})
+
     def _load_patterns(self) -> Dict:
-        """Load learned spending patterns."""
-        if self.patterns_file.exists():
-            with open(self.patterns_file, 'r') as f:
-                return json.load(f)
-        return {"patterns": []}
-    
+        return read_json(self.patterns_file, default={"patterns": []})
+
     def _save_config(self):
-        """Save budget configuration."""
-        with open(self.config_file, 'w') as f:
-            json.dump(self.config, f, indent=2)
-    
+        write_json_atomic(self.config_file, self.config)
+
     def _save_patterns(self):
-        """Save spending patterns."""
-        with open(self.patterns_file, 'w') as f:
-            json.dump(self.patterns, f, indent=2)
+        write_json_atomic(self.patterns_file, self.patterns)
     
     def set_budget(self, amount: float, priority: str = "medium", 
                    auto_adjust: bool = True) -> BudgetConfig:
@@ -153,83 +138,107 @@ class SmartBudgetManager:
     
     def learn_from_task(self, task_type: str, cost: float, tokens: int,
                         duration_minutes: float):
-        """Learn from completed task to improve future estimates."""
-        # Find or create pattern for this task type
+        """
+        Update (or create) a spending pattern for `task_type`.
+
+        Confidence is derived from the relative standard error of the
+        running cost mean (SEM / |mean|). With few samples it stays low
+        (the old `+= 0.05` ramp is gone); with many consistent samples
+        it approaches 0.95.
+        """
+        # Find or create pattern for this task type.
         pattern = None
         for p in self.patterns["patterns"]:
             if p["task_type"] == task_type:
                 pattern = p
                 break
-        
-        if pattern:
-            # Update existing pattern with exponential moving average
-            alpha = 0.2  # Learning rate
-            n = pattern["samples"] + 1
-            
-            pattern["avg_cost"] = (alpha * cost) + ((1 - alpha) * pattern["avg_cost"])
-            pattern["avg_tokens"] = int((alpha * tokens) + ((1 - alpha) * pattern["avg_tokens"]))
-            pattern["typical_duration_minutes"] = (
-                (alpha * duration_minutes) + ((1 - alpha) * pattern["typical_duration_minutes"])
-            )
-            pattern["samples"] = n
-            pattern["confidence"] = min(0.95, pattern["confidence"] + 0.05)
-            pattern["last_updated"] = datetime.now().isoformat()
-        else:
-            # Create new pattern
+
+        if pattern is None:
             new_pattern = SpendingPattern(
                 task_type=task_type,
                 avg_cost=cost,
                 avg_tokens=tokens,
                 typical_duration_minutes=duration_minutes,
-                confidence=0.5,
+                confidence=0.25,
                 samples=1,
-                last_updated=datetime.now().isoformat()
+                last_updated=datetime.now().isoformat(),
             )
-            self.patterns["patterns"].append(asdict(new_pattern))
-        
+            # Persist per-sample cost history so we can compute variance.
+            record = asdict(new_pattern)
+            record["cost_samples"] = [cost]
+            self.patterns["patterns"].append(record)
+            self._save_patterns()
+            return
+
+        # Append the new observation.
+        pattern.setdefault("cost_samples", [])
+        pattern["cost_samples"].append(cost)
+        # Cap history so the file doesn't grow unbounded.
+        if len(pattern["cost_samples"]) > 500:
+            pattern["cost_samples"] = pattern["cost_samples"][-500:]
+
+        # Running means; EMA still used for tokens/duration because those
+        # drift with the workload and confidence there is less load-bearing.
+        n = len(pattern["cost_samples"])
+        alpha = 0.2
+        pattern["avg_cost"] = sum(pattern["cost_samples"]) / n
+        pattern["avg_tokens"] = int(
+            (alpha * tokens) + ((1 - alpha) * pattern["avg_tokens"])
+        )
+        pattern["typical_duration_minutes"] = (
+            (alpha * duration_minutes)
+            + ((1 - alpha) * pattern["typical_duration_minutes"])
+        )
+        pattern["samples"] = n
+        pattern["confidence"] = self._confidence_from_samples(pattern["cost_samples"])
+        pattern["last_updated"] = datetime.now().isoformat()
         self._save_patterns()
+
+    @staticmethod
+    def _confidence_from_samples(samples: List[float]) -> float:
+        """
+        Confidence ∈ [0.1, 0.95] derived from the relative standard error
+        of the mean. Low samples or high variance → low confidence.
+        """
+        n = len(samples)
+        if n < 2:
+            return 0.25 if n == 1 else 0.1
+        mean = sum(samples) / n
+        if mean == 0:
+            # All zeros — mean is exact by construction.
+            return 0.9
+        variance = sum((x - mean) ** 2 for x in samples) / (n - 1)
+        std_dev = variance ** 0.5
+        sem = std_dev / (n ** 0.5)
+        rel_err = abs(sem / mean)
+        conf = 1.0 - min(rel_err, 1.0)
+        return max(0.1, min(0.95, conf))
     
     def estimate_task_cost(self, task_type: str, tokens_estimate: int,
-                           model: str = "claude-sonnet-4.5") -> Dict:
+                           model: str = "claude-sonnet-4-6") -> Dict:
         """Estimate cost for a task based on learned patterns."""
-        # Look up pattern
-        pattern = None
-        for p in self.patterns["patterns"]:
-            if p["task_type"] == task_type:
-                pattern = p
-                break
-        
-        # Get pricing for model
-        pricing = MODEL_PRICING.get(model, (3.00, 15.00))
-        input_price, output_price = pricing
-        
+        pattern = next(
+            (p for p in self.patterns["patterns"] if p["task_type"] == task_type),
+            None,
+        )
+
+        input_price, output_price = _model_prices(model)
+
+        # Assume 20% output tokens.
+        estimated_output = int(tokens_estimate * 0.2)
+        estimated_input = tokens_estimate - estimated_output
+        estimated_cost = (
+            (estimated_input / 1_000_000) * input_price
+            + (estimated_output / 1_000_000) * output_price
+        )
+
         if pattern and pattern["samples"] >= 3:
-            # Use learned pattern
-            avg_tokens = pattern["avg_tokens"]
-            # Assume 20% output tokens
-            estimated_output = int(tokens_estimate * 0.2)
-            estimated_input = tokens_estimate - estimated_output
-            
-            estimated_cost = (
-                (estimated_input / 1_000_000) * input_price +
-                (estimated_output / 1_000_000) * output_price
-            )
-            
             confidence = pattern["confidence"]
             source = "learned pattern"
         else:
-            # Use simple estimation
-            estimated_output = int(tokens_estimate * 0.2)
-            estimated_input = tokens_estimate - estimated_output
-            
-            estimated_cost = (
-                (estimated_input / 1_000_000) * input_price +
-                (estimated_output / 1_000_000) * output_price
-            )
-            
             confidence = 0.5
             source = "simple estimation"
-        
+
         return {
             "task_type": task_type,
             "estimated_cost": round(estimated_cost, 4),
@@ -237,47 +246,56 @@ class SmartBudgetManager:
             "model": model,
             "confidence": confidence,
             "source": source,
-            "pricing_used": pricing
+            "pricing_used": (input_price, output_price),
         }
     
-    def suggest_cheaper_alternatives(self, current_model: str, 
-                                      task_type: str,
-                                      max_savings_percent: float = 50) -> List[Dict]:
-        """Suggest cheaper model alternatives for a task."""
-        if current_model not in MODEL_PRICING:
+    def suggest_cheaper_alternatives(self, current_model: str,
+                                     task_type: str,
+                                     max_savings_percent: float = 50) -> List[Dict]:
+        """
+        Suggest cheaper model alternatives. Only considers models with the
+        same billing unit (tokens, images, seconds, ...) — a chat model and
+        an image-generation model aren't comparable.
+        """
+        current = _pricing.get_price(current_model)
+        if current is None:
             return []
-        
-        current_pricing = MODEL_PRICING[current_model]
-        current_cost_per_1M = current_pricing[0] + current_pricing[1]
-        
+
+        current_cost_per_1M = current.input_per_1m + current.output_per_1m
+        if current_cost_per_1M <= 0:
+            return []
+
         alternatives = []
-        
-        for model, pricing in MODEL_PRICING.items():
-            if model == current_model:
+        current_slug = _pricing.canonical_slug(current_model)
+        for slug, info in _pricing.load_pricing().items():
+            if slug == current_slug:
                 continue
-            
-            new_cost_per_1M = pricing[0] + pricing[1]
-            savings_percent = ((current_cost_per_1M - new_cost_per_1M) / current_cost_per_1M) * 100
-            
+            if info.unit != current.unit:
+                continue
+            new_cost_per_1M = info.input_per_1m + info.output_per_1m
+            savings_percent = (
+                (current_cost_per_1M - new_cost_per_1M) / current_cost_per_1M * 100
+            )
             if savings_percent >= max_savings_percent:
                 alternatives.append({
-                    "model": model,
+                    "model": slug,
                     "savings_percent": round(savings_percent, 1),
                     "new_cost_per_1M": round(new_cost_per_1M, 4),
                     "current_cost_per_1M": round(current_cost_per_1M, 4),
-                    "trade_offs": self._get_trade_offs(current_model, model)
+                    "unit": info.unit,
+                    "trade_offs": self._get_trade_offs(current_model, slug),
                 })
-        
-        # Sort by savings
+
         alternatives.sort(key=lambda x: x["savings_percent"], reverse=True)
-        return alternatives[:5]  # Top 5 alternatives
+        return alternatives[:5]
     
     def _get_trade_offs(self, current_model: str, alternative_model: str) -> str:
         """Get trade-offs when switching models."""
         trade_offs = {
-            "claude-opus-4.6": "Lower reasoning quality, faster responses",
-            "claude-sonnet-4.5": "Slightly lower quality, much faster",
-            "claude-haiku-4.5": "Much faster, lower quality for complex tasks",
+            "claude-opus-4-7": "Top-tier reasoning, highest cost",
+            "claude-opus-4-6": "Strong reasoning, same price tier as 4-7",
+            "claude-sonnet-4-6": "Slightly lower quality, much faster",
+            "claude-haiku-4-5": "Much faster, lower quality for complex tasks",
             "gpt-4o": "Different strengths, may need prompt adjustment",
             "gpt-4o-mini": "Good for simple tasks, less capable on complex reasoning",
             "gpt-4.1-nano": "Best for classification, extraction, simple tasks",
@@ -390,7 +408,7 @@ def main():
     elif command == "estimate":
         task_type = sys.argv[2]
         tokens = int(sys.argv[3])
-        model = sys.argv[4] if len(sys.argv) > 4 else "claude-sonnet-4.5"
+        model = sys.argv[4] if len(sys.argv) > 4 else "claude-sonnet-4-6"
         
         estimate = manager.estimate_task_cost(task_type, tokens, model)
         print(f"💰 Estimate for {task_type}:")

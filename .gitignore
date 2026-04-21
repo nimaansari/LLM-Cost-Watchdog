@@ -1,7 +1,51 @@
+# OS
 .DS_Store
+Thumbs.db
+
+# Python
 *.pyc
 __pycache__/
-.cache/
+*.pyo
+*.pyd
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+venv/
+env/
+.env
+.venv/
+
+# IDE
+.idea/
+.vscode/
 *.swp
 *.swo
 *~
+
+# Logs
+*.log
+logs/
+
+# Data
+*.jsonl
+data/
+.cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Testing
+.pytest_cache/
+.tox/
+coverage.xml
+*.cover
+
+# Temporary
+*.tmp
+*.bak
+*.temp

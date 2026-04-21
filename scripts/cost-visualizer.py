@@ -6,9 +6,13 @@ Generates cost reports, charts, and breakdowns for API spending.
 
 import json
 import os
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from io_utils import write_json_atomic, read_json
 
 # Default data directory for cost tracking
 DATA_DIR = Path.home() / ".cost-watchdog"
@@ -23,22 +27,19 @@ class CostTracker:
         self.data = self._load_data()
     
     def _load_data(self) -> dict:
-        """Load existing cost data or create new structure."""
-        if self.data_file.exists():
-            with open(self.data_file, 'r') as f:
-                return json.load(f)
-        return {
-            "sessions": [],
-            "tasks": [],
-            "providers": {},
-            "budgets": [],
-            "alerts": []
-        }
-    
+        return read_json(
+            self.data_file,
+            default={
+                "sessions": [],
+                "tasks": [],
+                "providers": {},
+                "budgets": [],
+                "alerts": [],
+            },
+        )
+
     def _save_data(self):
-        """Save cost data to file."""
-        with open(self.data_file, 'w') as f:
-            json.dump(self.data, f, indent=2)
+        write_json_atomic(self.data_file, self.data)
     
     def add_session(self, session_id: str, model: str, tokens_in: int, 
                     tokens_out: int, cost: float, duration_seconds: int = 0):

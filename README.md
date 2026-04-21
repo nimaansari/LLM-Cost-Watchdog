@@ -95,7 +95,7 @@ cp -r ~/Documents/cost-watchdog .claude/skills/cost-watchdog
 
 # NEW v2.1: Smart budgeting
 /cost-watchdog set-budget 5.00 --priority=high   # Auto-adjust for priority
-/cost-watchdog alternatives claude-sonnet-4.5    # Find cheaper models
+/cost-watchdog alternatives claude-sonnet-4-6    # Find cheaper models
 /cost-watchdog learn task-type 0.85 120000       # Learn from completed task
 /cost-watchdog estimate task-type 150000         # Smart estimate with learning
 ```
@@ -231,11 +231,11 @@ Image analysis          ████ $0.20
 
 ### Find Cheaper Alternatives
 ```bash
-/cost-watchdog alternatives claude-sonnet-4.5 --savings=50
+/cost-watchdog alternatives claude-sonnet-4-6 --savings=50
 
 # Response:
-💡 Cheaper alternatives to claude-sonnet-4.5 (>50% savings):
-   • claude-haiku-4.5: Save 73%
+💡 Cheaper alternatives to claude-sonnet-4-6 (>50% savings):
+   • claude-haiku-4-5: Save 67%
      Trade-off: Much faster, lower quality for complex tasks
    • gpt-4o-mini: Save 87%
      Trade-off: Good for simple tasks, less capable on complex reasoning
@@ -302,10 +302,10 @@ python smart-budget.py set 5.00 --priority=high
 python smart-budget.py status
 
 # Estimate task cost
-python smart-budget.py estimate document-summarization 150000 claude-sonnet-4.5
+python smart-budget.py estimate document-summarization 150000 claude-sonnet-4-6
 
 # Find alternatives
-python smart-budget.py alternatives claude-sonnet-4.5 --savings=50
+python smart-budget.py alternatives claude-sonnet-4-6 --savings=50
 
 # Learn from task
 python smart-budget.py learn document-summarization 0.85 120000 15
