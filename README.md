@@ -69,7 +69,11 @@ python3 scripts/cost_watchdog.py <command> [args]
 | `audit <file.py> ...` | AST scan for cost risks (unbounded loops, recursion, missing `max_tokens`). |
 | `price <model>` | Live pricing for one model, with source + cache age. |
 | `estimate <model> --input-tokens N --output-tokens N [--iterations K]` | Project cost for K iterations of a call. |
-| `alternatives <model> [--input-tokens N] [--output-tokens N] [--min-savings 0.5]` | Cheaper same-billing-unit models. |
+| `alternatives <model> [--input-tokens N] [--output-tokens N] [--min-savings 0.5]` | Cheaper models with the same billing unit **and** mode. |
+| `visualize <daily\|weekly\|providers\|chart>` | Spend report / ASCII chart built from the usage log. |
+| `set-budget <amount> [--priority low\|medium\|high\|critical]` | Set a priority-adjusted budget (×0.5 / ×1 / ×1.5 / ×2). |
+| `learn <task_type> <cost> <tokens> [minutes]` | Record a completed task to learn its typical cost. |
+| `smart-estimate <task_type> <tokens> [model]` | Estimate a task's cost from learned patterns. |
 | `errors [--limit N]` | Recent swallowed exceptions (silent failures made visible). |
 | `validate-tokens <model> [--text ...]` | Compare the heuristic token count to the provider's API. |
 | `reset [--yes] [--all]` | Clear the usage log (`--all` also deletes rolled daily files). |
@@ -97,23 +101,17 @@ wrappers in `tracker.py` for streaming coverage.
 
 ---
 
-## 🧩 Auxiliary scripts
+## 🧩 Auxiliary modules
 
-Two extra tools ship as standalone scripts (run directly):
+The visualizer, smart-budget manager, and optimized calculator are wired into
+the unified CLI above (`visualize`, `set-budget`, `learn`, `smart-estimate`,
+`alternatives`). They are also importable modules and can still be run directly:
 
 ```bash
-# Visual spend reports / ASCII charts
-python3 scripts/cost-visualizer.py daily | weekly | tasks | providers | chart
-
-# Priority-aware budgeting + learning from past tasks
-python3 scripts/smart-budget.py set 5.00 --priority=high
-python3 scripts/smart-budget.py estimate <task-type> <tokens> <model>
-python3 scripts/smart-budget.py alternatives <model> --savings=50
-python3 scripts/smart-budget.py learn <task-type> <cost> <tokens> <minutes>
+python3 scripts/cost_visualizer.py daily | weekly | tasks | providers | chart
+python3 scripts/smart_budget.py set 5.00 --priority=high
+python3 scripts/smart_budget.py learn <task-type> <cost> <tokens> <minutes>
 ```
-
-> Note: these are not yet wired into `cost_watchdog.py`'s subcommands; they run
-> as their own scripts.
 
 ---
 
@@ -145,9 +143,9 @@ cost-watchdog/
     ├── model_canon.py          # model-name canonicalization
     ├── errors.py               # error log (swallowed-exception visibility)
     ├── io_utils.py             # atomic JSON writes, etc.
-    ├── cost-visualizer.py      # (aux) charts & reports
-    ├── smart-budget.py         # (aux) priority budgeting + learning
-    └── optimized-calculator.py # (aux) cheaper-alternative search
+    ├── cost_visualizer.py      # (aux) charts & reports
+    ├── smart_budget.py         # (aux) priority budgeting + learning
+    └── optimized_calculator.py # (aux) cheaper-alternative search
 ```
 
 ---

@@ -270,7 +270,9 @@ class SmartBudgetManager:
         for slug, info in _pricing.load_pricing().items():
             if slug == current_slug:
                 continue
-            if info.unit != current.unit:
+            # Same billing unit AND mode: don't offer an embedding model
+            # (priced per token, like chat) as a cheaper chat alternative.
+            if info.unit != current.unit or info.mode != current.mode:
                 continue
             new_cost_per_1M = info.input_per_1m + info.output_per_1m
             savings_percent = (
@@ -376,7 +378,7 @@ def main():
     
     import sys
     if len(sys.argv) < 2:
-        print("Usage: smart-budget.py [command] [args]")
+        print("Usage: smart_budget.py [command] [args]")
         print("Commands:")
         print("  set <amount> [--priority=low|medium|high|critical]")
         print("  status")

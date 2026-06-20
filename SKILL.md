@@ -2,7 +2,7 @@
 name: cost-watchdog
 description: Tracks LLM spend across providers live, detects runaway loops, enforces budgets. Triggers on: cost/budget/token mentions, LLM API calls, agent workflows, batch processing.
 when_to_use: "TRIGGER when: cost/budget/token mentions, LLM API calls in code, agent loops, batch processing, or `/cost-watchdog` commands."
-argument-hint: "[command] — session, tail, detect, audit, price, estimate, alternatives, report, errors, validate-tokens, reset"
+argument-hint: "[command] — session, report, visualize, tail, detect, audit, price, estimate, smart-estimate, alternatives, set-budget, learn, errors, validate-tokens, reset"
 metadata: {"openclaw": {"emoji": "💰"}}
 ---
 
@@ -40,7 +40,11 @@ Run via `python3 scripts/cost_watchdog.py <cmd>` (or hook into your own CLI).
 | `audit <file.py>` | AST-based code risk scan: unbounded loops, recursion, missing `max_tokens`. |
 | `price <model>` | Live pricing for one model, with source + cache age. |
 | `estimate <model>` | Project cost for `n` iterations of a given call. |
-| `alternatives <model>` | Cheaper same-unit models. |
+| `alternatives <model>` | Cheaper models with the same billing unit *and* mode. |
+| `visualize <daily\|weekly\|providers\|chart>` | Spend report / ASCII chart from the usage log. |
+| `set-budget <amount> [--priority low\|medium\|high\|critical]` | Set a priority-adjusted budget. |
+| `learn <task_type> <cost> <tokens> [minutes]` | Record a completed task to learn its typical cost. |
+| `smart-estimate <task_type> <tokens> [model]` | Estimate a task's cost from learned patterns. |
 | `errors [--limit N]` | Recent swallowed exceptions (silent failures made visible). |
 | `validate-tokens <model>` | Compare our heuristic against provider's authoritative count. |
 | `reset [--all]` | Clear current-day log (`--all` also clears rolled files). |

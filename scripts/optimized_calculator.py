@@ -160,13 +160,15 @@ def find_cheaper_alternatives(current_model: str,
                               min_savings: float = 0.5) -> list:
     """
     Find models that are at least min_savings (0.5 = 50%) cheaper.
-    Only compares models with the same billing unit (can't compare tokens
-    to images to seconds).
+    Only compares models with the same billing unit AND mode — otherwise an
+    embedding model (priced per token, like chat) gets offered as a "cheaper"
+    chat alternative, and tokens/images/seconds aren't comparable either.
     """
     current_price = _pricing.get_price(current_model)
     if current_price is None:
         return []
     current_unit = current_price.unit
+    current_mode = current_price.mode
 
     current_results = compare_models(input_tokens, output_tokens, [current_model])
     if not current_results:
@@ -180,7 +182,7 @@ def find_cheaper_alternatives(current_model: str,
     for slug, info in _pricing.load_pricing().items():
         if slug == current_slug:
             continue
-        if info.unit != current_unit:
+        if info.unit != current_unit or info.mode != current_mode:
             continue
         alt_cost = compare_models(input_tokens, output_tokens, [slug])[0]['total_cost']
         savings = (current_cost - alt_cost) / current_cost
@@ -228,7 +230,7 @@ def main():
     import sys
     
     if len(sys.argv) < 2:
-        print("Usage: optimized-calculator.py [command] [args]")
+        print("Usage: optimized_calculator.py [command] [args]")
         print("Commands:")
         print("  estimate <text> <model>              - Estimate cost")
         print("  batch <count> <input> <output> <model> - Batch estimate")

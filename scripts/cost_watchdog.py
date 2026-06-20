@@ -132,15 +132,8 @@ def cmd_estimate(args) -> int:
 
 
 def cmd_alternatives(args) -> int:
-    import _pricing
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "optimized_calculator",
-        Path(__file__).resolve().parent / "optimized-calculator.py",
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    alts = mod.find_cheaper_alternatives(
+    import optimized_calculator
+    alts = optimized_calculator.find_cheaper_alternatives(
         args.model, args.input_tokens, args.output_tokens,
         min_savings=args.min_savings,
     )
@@ -262,6 +255,48 @@ from LiteLLM for live pricing.
 """.strip()
 
 
+def cmd_visualize(args) -> int:
+    import cost_visualizer as cv
+    if args.kind == "daily":
+        print(cv.render_window_report("24h", 24))
+    elif args.kind == "weekly":
+        print(cv.render_window_report("7 days", 24 * 7))
+    elif args.kind == "providers":
+        print(cv.render_providers(24 * 7))
+    elif args.kind == "chart":
+        print(cv.render_chart(24 * 7))
+    return 0
+
+
+def cmd_set_budget(args) -> int:
+    import smart_budget
+    mgr = smart_budget.SmartBudgetManager()
+    b = mgr.set_budget(args.amount, args.priority)
+    print(f"Budget set: ${b.amount:.2f}  (base ${args.amount:.2f} × {args.priority})")
+    print(f"Alerts at:  {', '.join(f'{p:.0f}%' for p in b.alerts_at)}")
+    return 0
+
+
+def cmd_learn(args) -> int:
+    import smart_budget
+    mgr = smart_budget.SmartBudgetManager()
+    mgr.learn_from_task(args.task_type, args.cost, args.tokens, args.minutes)
+    print(f"Learned: {args.task_type}  "
+          f"(${args.cost:.4f}, {args.tokens:,} tokens, {args.minutes:g} min)")
+    return 0
+
+
+def cmd_smart_estimate(args) -> int:
+    import smart_budget
+    mgr = smart_budget.SmartBudgetManager()
+    est = mgr.estimate_task_cost(args.task_type, args.tokens, args.model)
+    print(f"Estimate for {args.task_type}: ${est['estimated_cost']:.4f}")
+    print(f"  Tokens:     {est['estimated_tokens']:,}")
+    print(f"  Confidence: {est['confidence']:.0%}  ({est['source']})")
+    print(f"  Model:      {est['model']}")
+    return 0
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="cost-watchdog CLI")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -316,6 +351,30 @@ def main() -> int:
     vt.add_argument("model")
     vt.add_argument("--text", help="text to tokenize (uses a default if omitted)")
     vt.set_defaults(fn=cmd_validate_tokens)
+
+    vz = sub.add_parser("visualize", help="spend report / chart from the usage log")
+    vz.add_argument("kind", choices=["daily", "weekly", "providers", "chart"])
+    vz.set_defaults(fn=cmd_visualize)
+
+    sb = sub.add_parser("set-budget", help="set a budget (priority-adjusted)")
+    sb.add_argument("amount", type=float)
+    sb.add_argument("--priority", choices=["low", "medium", "high", "critical"],
+                    default="medium")
+    sb.set_defaults(fn=cmd_set_budget)
+
+    ln = sub.add_parser("learn", help="record a completed task to learn its cost")
+    ln.add_argument("task_type")
+    ln.add_argument("cost", type=float)
+    ln.add_argument("tokens", type=int)
+    ln.add_argument("minutes", type=float, nargs="?", default=0.0)
+    ln.set_defaults(fn=cmd_learn)
+
+    se = sub.add_parser("smart-estimate",
+                        help="estimate a task's cost from learned patterns")
+    se.add_argument("task_type")
+    se.add_argument("tokens", type=int)
+    se.add_argument("model", nargs="?", default="claude-sonnet-4-6")
+    se.set_defaults(fn=cmd_smart_estimate)
 
     args = p.parse_args()
     return args.fn(args)
