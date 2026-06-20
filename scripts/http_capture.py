@@ -10,21 +10,35 @@ Usage:
     from http_capture import install_global_capture
     install_global_capture()   # call once at process start
 
+How it works (and why the naive version didn't):
+    At the transport layer (`HTTPTransport.handle_request`) the response body
+    has NOT been read yet — touching `response.content` raises
+    `httpx.ResponseNotRead`, so the old "read response.content here" approach
+    captured nothing for normal (non-streaming) calls. Instead we wrap
+    `response.stream` with a tee that buffers the raw bytes as the SDK reads
+    them, and parses usage once the stream is fully consumed. The SDK still
+    gets its bytes untouched.
+
+    The buffered bytes are content-encoded (gzip/deflate/br), so we decode
+    using the `Content-Encoding` header before parsing JSON.
+
 Not captured:
     - SDKs that use `requests`/`urllib3` directly (older Cohere, boto3).
       Use the per-SDK wrappers in tracker.py for those.
-    - Streaming responses (we read usage from the final body, which means
-      the stream has to have finished).
+    - Streaming responses (text/event-stream): usage arrives in a final SSE
+      chunk owned by the caller; we record the gap instead of guessing.
 
 This is best-effort telemetry. For strict billing you still want the
 provider's own dashboard.
 """
 from __future__ import annotations
 
+import gzip
 import json
 import sys
+import zlib
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Optional, Tuple
 from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -49,6 +63,10 @@ _KNOWN_HOSTS = [
     ("api.perplexity.ai", "perplexity"),
 ]
 
+# Cap how much we buffer per response (bytes). LLM JSON bodies are tiny; this
+# guards against teeing a huge non-LLM download that shares a known host.
+_MAX_BUFFER = 2 * 1024 * 1024
+
 
 def _classify_host(host: str) -> Optional[str]:
     host = host.lower()
@@ -58,11 +76,36 @@ def _classify_host(host: str) -> Optional[str]:
     return None
 
 
+def _decode_body(content_encoding: str, raw: bytes) -> Optional[bytes]:
+    """Decode a content-encoded body. Returns None if we can't."""
+    enc = (content_encoding or "").lower().strip()
+    try:
+        if enc in ("", "identity"):
+            return raw
+        if enc == "gzip":
+            return gzip.decompress(raw)
+        if enc == "deflate":
+            try:
+                return zlib.decompress(raw)
+            except zlib.error:
+                return zlib.decompress(raw, -zlib.MAX_WBITS)
+        if enc == "br":
+            try:
+                import brotli  # type: ignore
+            except ImportError:
+                return None
+            return brotli.decompress(raw)
+    except (OSError, zlib.error, ValueError):
+        return None
+    # Unknown encoding (e.g. "zstd") — give up gracefully.
+    return None
+
+
 def _extract_model_and_usage(provider: str, body: dict) -> Tuple[Optional[str], int, int, int, int]:
     """
     Return (model, input_tokens, output_tokens, cache_read, cache_write).
-    Handles OpenAI-style, Anthropic-style, and Gemini-style bodies.
-    Zeros for anything missing.
+    Handles OpenAI-style, Anthropic-style, Gemini-style, and Cohere-style
+    bodies. Zeros for anything missing.
     """
     if not isinstance(body, dict):
         return (None, 0, 0, 0, 0)
@@ -104,11 +147,15 @@ def _extract_model_and_usage(provider: str, body: dict) -> Tuple[Optional[str], 
     return (model, 0, 0, 0, 0)
 
 
-def _log_http_call(provider: str, body: dict) -> None:
+def log_usage_from_body(provider: str, body: dict) -> bool:
+    """
+    Price a parsed response body and append a usage row. Returns True if a
+    priceable LLM call was logged. Pure + synchronous — unit-testable.
+    """
     model, inp, out, cr, cw = _extract_model_and_usage(provider, body)
     if not model or (inp == 0 and out == 0):
-        # Not a priceable LLM call (could be a list_models, health check, etc.)
-        return
+        # Not a priceable LLM call (could be list_models, a health check, etc.)
+        return False
     price = _pricing.get_price(model)
     if price and price.unit == "token":
         cost_in = (inp / 1_000_000) * price.input_per_1m
@@ -130,16 +177,97 @@ def _log_http_call(provider: str, body: dict) -> None:
         "session_id": None,
         "extra": {"via": "httpx_transport"},
     })
+    return True
+
+
+def _parse_and_log(provider: str, content_encoding: str, raw: bytes) -> bool:
+    """Decode + JSON-parse buffered bytes, then log. Best-effort; never raises."""
+    try:
+        if not raw or len(raw) > _MAX_BUFFER:
+            return False
+        decoded = _decode_body(content_encoding, raw)
+        if decoded is None:
+            return False
+        body = json.loads(decoded.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, AttributeError):
+        return False
+    try:
+        return log_usage_from_body(provider, body)
+    except Exception:  # noqa: BLE001 — telemetry must never break the caller
+        return False
 
 
 _INSTALLED = False
 
 
+def _wrap_response(httpx_mod, response, request) -> None:
+    """Attach a teeing stream to `response` if it's a priceable LLM JSON call."""
+    host = urlsplit(str(request.url)).netloc
+    provider = _classify_host(host)
+    if provider is None:
+        return
+    content_type = (response.headers.get("content-type") or "").lower()
+
+    if "text/event-stream" in content_type:
+        _report_stream_gap(provider, str(request.url))
+        return
+    if "application/json" not in content_type:
+        return
+
+    content_encoding = response.headers.get("content-encoding") or ""
+    inner = getattr(response, "stream", None)
+    if inner is None:
+        return
+
+    is_async = hasattr(inner, "__aiter__")
+    buf = bytearray()
+    done = {"v": False}
+
+    def finish():
+        if done["v"]:
+            return
+        done["v"] = True
+        _parse_and_log(provider, content_encoding, bytes(buf))
+
+    if is_async:
+        class _Tee(httpx_mod.AsyncByteStream):
+            async def __aiter__(self):
+                async for chunk in inner:
+                    if len(buf) <= _MAX_BUFFER:
+                        buf.extend(chunk)
+                    yield chunk
+                finish()
+
+            async def aclose(self):
+                try:
+                    if hasattr(inner, "aclose"):
+                        await inner.aclose()
+                finally:
+                    finish()
+    else:
+        class _Tee(httpx_mod.SyncByteStream):
+            def __iter__(self):
+                for chunk in inner:
+                    if len(buf) <= _MAX_BUFFER:
+                        buf.extend(chunk)
+                    yield chunk
+                finish()
+
+            def close(self):
+                try:
+                    if hasattr(inner, "close"):
+                        inner.close()
+                finally:
+                    finish()
+
+    response.stream = _Tee()
+
+
 def install_global_capture() -> bool:
     """
-    Monkey-patch httpx.HTTPTransport.handle_request so every request to a
-    known LLM host gets logged. Returns True if installed, False if httpx
-    isn't available.
+    Monkey-patch httpx transports so every request to a known LLM host gets
+    its response stream tee'd and usage logged. Returns True if installed,
+    False if httpx isn't available. Idempotent.
     """
     global _INSTALLED
     if _INSTALLED:
@@ -154,22 +282,21 @@ def install_global_capture() -> bool:
     def sync_wrapped(self, request):
         response = original_sync(self, request)
         try:
-            _maybe_log(request, response)
-        except Exception:
+            _wrap_response(httpx, response, request)
+        except Exception:  # noqa: BLE001
             pass
         return response
 
     httpx.HTTPTransport.handle_request = sync_wrapped
 
-    # Async transport (AsyncHTTPTransport) — patch the async path too.
     if hasattr(httpx, "AsyncHTTPTransport"):
         original_async = httpx.AsyncHTTPTransport.handle_async_request
 
         async def async_wrapped(self, request):
             response = await original_async(self, request)
             try:
-                _maybe_log(request, response)
-            except Exception:
+                _wrap_response(httpx, response, request)
+            except Exception:  # noqa: BLE001
                 pass
             return response
 
@@ -177,38 +304,6 @@ def install_global_capture() -> bool:
 
     _INSTALLED = True
     return True
-
-
-def _maybe_log(request, response) -> None:
-    """Inspect a finished httpx request/response pair and log if it's an LLM call."""
-    host = urlsplit(str(request.url)).netloc
-    provider = _classify_host(host)
-    if provider is None:
-        return
-
-    content_type = (response.headers.get("content-type") or "").lower()
-
-    # Streaming (SSE / chunked). We can't read the final usage chunk here —
-    # the user owns the stream. Record the gap so it's visible.
-    if "text/event-stream" in content_type:
-        _report_stream_gap(provider, str(request.url))
-        return
-
-    if "application/json" not in content_type:
-        return
-
-    # httpx response.content is only populated for non-streaming responses.
-    # For streams the user read with iter_lines(), .content raises.
-    try:
-        raw = response.content
-    except Exception:
-        _report_stream_gap(provider, str(request.url))
-        return
-    try:
-        body = json.loads(raw.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError, AttributeError):
-        return
-    _log_http_call(provider, body)
 
 
 def _report_stream_gap(provider: str, url: str) -> None:

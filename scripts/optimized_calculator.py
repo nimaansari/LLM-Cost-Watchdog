@@ -154,19 +154,38 @@ def compare_models(input_tokens: int, output_tokens: int,
     return results
 
 
+# Model-name hints for non-chat generators that some upstream pricing rows
+# mislabel as mode="chat" with a per-token price. Used as a belt-and-suspenders
+# guard on top of the unit/mode filter so they can't surface as chat
+# alternatives. (Deliberately excludes "vision" — multimodal *chat* models like
+# llama-3.2-vision are legitimate alternatives.)
+_NON_CHAT_HINTS = (
+    "flux", "stable-diffusion", "stable-audio", "sdxl", "sd3", "dall-e", "dalle",
+    "controlnet", "whisper", "-tts", "text-to-speech", "embed", "rerank",
+    "imagen", "kandinsky", "recraft", "playground-v", "wan2", "seedream", "veo",
+)
+
+
+def _looks_non_chat(slug: str) -> bool:
+    s = slug.lower()
+    return any(h in s for h in _NON_CHAT_HINTS)
+
+
 def find_cheaper_alternatives(current_model: str,
                               input_tokens: int,
                               output_tokens: int,
                               min_savings: float = 0.5) -> list:
     """
     Find models that are at least min_savings (0.5 = 50%) cheaper.
-    Only compares models with the same billing unit (can't compare tokens
-    to images to seconds).
+    Only compares models with the same billing unit AND mode — otherwise an
+    embedding model (priced per token, like chat) gets offered as a "cheaper"
+    chat alternative, and tokens/images/seconds aren't comparable either.
     """
     current_price = _pricing.get_price(current_model)
     if current_price is None:
         return []
     current_unit = current_price.unit
+    current_mode = current_price.mode
 
     current_results = compare_models(input_tokens, output_tokens, [current_model])
     if not current_results:
@@ -180,9 +199,19 @@ def find_cheaper_alternatives(current_model: str,
     for slug, info in _pricing.load_pricing().items():
         if slug == current_slug:
             continue
-        if info.unit != current_unit:
+        if info.unit != current_unit or info.mode != current_mode:
+            continue
+        if _looks_non_chat(slug):
+            continue
+        # Skip rows with no real per-token price. A genuine chat model bills
+        # output tokens; a $0 price here means missing/miscategorised data
+        # (e.g. an image model upstream-tagged mode=chat) — not a real
+        # "100% cheaper" option.
+        if info.input_per_1m <= 0 or info.output_per_1m <= 0:
             continue
         alt_cost = compare_models(input_tokens, output_tokens, [slug])[0]['total_cost']
+        if alt_cost <= 0:
+            continue
         savings = (current_cost - alt_cost) / current_cost
         if savings >= min_savings:
             alternatives.append({
@@ -228,7 +257,7 @@ def main():
     import sys
     
     if len(sys.argv) < 2:
-        print("Usage: optimized-calculator.py [command] [args]")
+        print("Usage: optimized_calculator.py [command] [args]")
         print("Commands:")
         print("  estimate <text> <model>              - Estimate cost")
         print("  batch <count> <input> <output> <model> - Batch estimate")

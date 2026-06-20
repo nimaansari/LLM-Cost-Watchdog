@@ -120,20 +120,19 @@ def provider_display(key: str) -> str:
 
 
 def _normalize_cost(entry: dict, field: str) -> float:
-    """Return cost * 1M (for token/character fields) or raw (for everything else)."""
+    """
+    Scale a LiteLLM cost field to "per 1M units" so every column in pricing.md
+    is uniform. LiteLLM stores all cost fields as per-1-unit (per token, per
+    image, per second, per query, per page), so the scale factor is 1M for all
+    of them.
+    """
     val = entry.get(field)
     if val is None:
         return 0.0
     try:
-        val = float(val)
+        return float(val) * 1_000_000
     except (TypeError, ValueError):
         return 0.0
-    # Per-token and per-character fields are in per-token units; scale to 1M.
-    if "per_token" in field or "per_character" in field:
-        return val * 1_000_000
-    # Per-image / per-second / per-query / per-page are given per-1, so scale to 1M
-    # so every column in pricing.md is "per 1M units" uniformly.
-    return val * 1_000_000
 
 
 def extract_cost(entry: dict, mode: str) -> Optional[tuple]:

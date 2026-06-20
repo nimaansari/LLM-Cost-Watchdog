@@ -216,13 +216,83 @@ class CostTracker:
         return "\n".join(report)
 
 
+# ---------------------------------------------------------------------------
+# Reports derived from the real usage log (usage.jsonl), not the standalone
+# cost-data.json store. The unified CLI's `visualize` command uses these so
+# charts reflect actually-recorded calls.
+# ---------------------------------------------------------------------------
+
+def _aggregate_usage(since: Optional[float] = None) -> dict:
+    import usage_log
+    by_provider: dict = {}
+    by_model: dict = {}
+    total_cost, calls, tokens = 0.0, 0, 0
+    for e in usage_log.iter_entries(since=since):
+        c = e.get("cost_total", 0.0)
+        total_cost += c
+        calls += 1
+        tokens += e.get("input_tokens", 0) + e.get("output_tokens", 0)
+        prov = e.get("provider") or "unknown"
+        pb = by_provider.setdefault(prov, {"cost": 0.0, "calls": 0})
+        pb["cost"] += c
+        pb["calls"] += 1
+        m = e.get("model") or "unknown"
+        mb = by_model.setdefault(m, {"cost": 0.0, "calls": 0})
+        mb["cost"] += c
+        mb["calls"] += 1
+    return {"total_cost": total_cost, "calls": calls, "tokens": tokens,
+            "by_provider": by_provider, "by_model": by_model}
+
+
+def render_window_report(label: str, hours: float) -> str:
+    import time
+    agg = _aggregate_usage(time.time() - hours * 3600)
+    lines = ["=" * 56, f"📊 Cost Report — last {label}", "=" * 56,
+             f"💰 Total Cost: ${agg['total_cost']:.4f}",
+             f"📝 Calls:      {agg['calls']:,}",
+             f"🔢 Tokens:     {agg['tokens']:,}", ""]
+    if agg["by_model"]:
+        lines.append("Top models by cost:")
+        for m, s in sorted(agg["by_model"].items(), key=lambda x: -x[1]["cost"])[:5]:
+            lines.append(f"  {m[:34]:<34} ${s['cost']:.4f} ({s['calls']} calls)")
+    else:
+        lines.append("No usage recorded in this window.")
+    lines.append("=" * 56)
+    return "\n".join(lines)
+
+
+def render_providers(hours: float) -> str:
+    import time
+    agg = _aggregate_usage(time.time() - hours * 3600)
+    if not agg["by_provider"]:
+        return "No usage recorded."
+    out = ["📊 Provider Breakdown:"]
+    for p, s in sorted(agg["by_provider"].items(), key=lambda x: -x[1]["cost"]):
+        out.append(f"  {p:<15} ${s['cost']:.4f} ({s['calls']} calls)")
+    return "\n".join(out)
+
+
+def render_chart(hours: float, width: int = 40) -> str:
+    import time
+    agg = _aggregate_usage(time.time() - hours * 3600)
+    items = sorted(agg["by_model"].items(), key=lambda x: -x[1]["cost"])[:10]
+    if not items:
+        return "No usage recorded."
+    mx = max(s["cost"] for _, s in items) or 1.0
+    out = ["📊 Cost by model:"]
+    for m, s in items:
+        bar = "█" * max(1, int((s["cost"] / mx) * width)) if s["cost"] > 0 else ""
+        out.append(f"  {m[:20]:<20} {bar} ${s['cost']:.4f}")
+    return "\n".join(out)
+
+
 def main():
     """CLI interface for cost visualization."""
     tracker = CostTracker()
-    
+
     import sys
     if len(sys.argv) < 2:
-        print("Usage: cost-visualizer.py [command]")
+        print("Usage: cost_visualizer.py [command]")
         print("Commands:")
         print("  daily     - Show daily cost report")
         print("  weekly    - Show weekly cost report")

@@ -43,8 +43,8 @@ class TestDocumentation(unittest.TestCase):
     def test_scripts_exist(self):
         """Test that all scripts exist."""
         scripts_dir = Path(__file__).parent.parent / "scripts"
-        self.assertTrue((scripts_dir / "cost-visualizer.py").exists())
-        self.assertTrue((scripts_dir / "smart-budget.py").exists())
+        self.assertTrue((scripts_dir / "cost_visualizer.py").exists())
+        self.assertTrue((scripts_dir / "smart_budget.py").exists())
     
     def test_reference_files_exist(self):
         """Test that all reference files exist."""
@@ -84,9 +84,9 @@ class TestScriptsExecution(unittest.TestCase):
     """Test that scripts execute without errors."""
     
     def test_cost_visualizer_help(self):
-        """Test cost-visualizer.py shows help."""
+        """Test cost_visualizer.py shows help."""
         result = subprocess.run(
-            ["python3", "scripts/cost-visualizer.py"],
+            ["python3", "scripts/cost_visualizer.py"],
             capture_output=True,
             text=True,
             cwd=str(Path(__file__).parent.parent)
@@ -95,9 +95,9 @@ class TestScriptsExecution(unittest.TestCase):
         self.assertIn("Commands:", result.stdout)
     
     def test_smart_budget_help(self):
-        """Test smart-budget.py shows help."""
+        """Test smart_budget.py shows help."""
         result = subprocess.run(
-            ["python3", "scripts/smart-budget.py"],
+            ["python3", "scripts/smart_budget.py"],
             capture_output=True,
             text=True,
             cwd=str(Path(__file__).parent.parent)
@@ -106,9 +106,9 @@ class TestScriptsExecution(unittest.TestCase):
         self.assertIn("Commands:", result.stdout)
     
     def test_cost_visualizer_daily(self):
-        """Test cost-visualizer.py daily command."""
+        """Test cost_visualizer.py daily command."""
         result = subprocess.run(
-            ["python3", "scripts/cost-visualizer.py", "daily"],
+            ["python3", "scripts/cost_visualizer.py", "daily"],
             capture_output=True,
             text=True,
             cwd=str(Path(__file__).parent.parent)
@@ -116,9 +116,9 @@ class TestScriptsExecution(unittest.TestCase):
         self.assertIn("Daily Cost Report", result.stdout)
     
     def test_smart_budget_set(self):
-        """Test smart-budget.py set command."""
+        """Test smart_budget.py set command."""
         result = subprocess.run(
-            ["python3", "scripts/smart-budget.py", "set", "10.00", "--priority=high"],
+            ["python3", "scripts/smart_budget.py", "set", "10.00", "--priority=high"],
             capture_output=True,
             text=True,
             cwd=str(Path(__file__).parent.parent)
@@ -126,9 +126,9 @@ class TestScriptsExecution(unittest.TestCase):
         self.assertIn("Budget set", result.stdout)
     
     def test_smart_budget_alternatives(self):
-        """Test smart-budget.py alternatives command."""
+        """Test smart_budget.py alternatives command."""
         result = subprocess.run(
-            ["python3", "scripts/smart-budget.py", "alternatives", "claude-sonnet-4-6", "--savings=50"],
+            ["python3", "scripts/smart_budget.py", "alternatives", "claude-sonnet-4-6", "--savings=50"],
             capture_output=True,
             text=True,
             cwd=str(Path(__file__).parent.parent)
@@ -201,7 +201,7 @@ class TestPricingLoader(unittest.TestCase):
         """Regression: substring match made every model look cheaper than itself."""
         import importlib.util
         spec = importlib.util.spec_from_file_location(
-            "optimized_calculator", SCRIPTS_DIR / "optimized-calculator.py"
+            "optimized_calculator", SCRIPTS_DIR / "optimized_calculator.py"
         )
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
@@ -316,7 +316,7 @@ class TestMultiModalAlternatives(unittest.TestCase):
         """A chat (token) model's alternatives must all be token-unit models."""
         import importlib.util
         spec = importlib.util.spec_from_file_location(
-            "optimized_calculator", SCRIPTS_DIR / "optimized-calculator.py"
+            "optimized_calculator", SCRIPTS_DIR / "optimized_calculator.py"
         )
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
@@ -587,7 +587,7 @@ class TestConfidenceFromSamples(unittest.TestCase):
         # Import via importlib because module has a hyphen.
         import importlib.util
         spec = importlib.util.spec_from_file_location(
-            "smart_budget", SCRIPTS_DIR / "smart-budget.py"
+            "smart_budget", SCRIPTS_DIR / "smart_budget.py"
         )
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
@@ -866,7 +866,7 @@ class TestFileStructure(unittest.TestCase):
         """Test that scripts are executable."""
         scripts_dir = Path(__file__).parent.parent / "scripts"
         
-        for script in ["cost-visualizer.py", "smart-budget.py"]:
+        for script in ["cost_visualizer.py", "smart_budget.py"]:
             script_path = scripts_dir / script
             self.assertTrue(script_path.exists(), f"{script} not found")
             # Check if file is readable
