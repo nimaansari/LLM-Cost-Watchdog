@@ -1,0 +1,17 @@
+# Cost Watchdog dependencies
+#
+# The core CLI (scripts/cost_watchdog.py) runs on the Python 3.8+ standard
+# library alone — no install needed for: session, report, audit, price,
+# estimate, alternatives, errors, reset, detect, tail.
+#
+# The packages below are OPTIONAL and only unlock specific features:
+
+# Passive HTTP capture of SDK calls (http_capture.install_global_capture()).
+# Most LLM SDKs already depend on httpx, so it's usually present already.
+httpx>=0.24
+
+# Exact OpenAI token counts for `validate-tokens` (otherwise a heuristic is used).
+tiktoken>=0.5
+
+# Authoritative Anthropic token counts for `validate-tokens`.
+anthropic>=0.30

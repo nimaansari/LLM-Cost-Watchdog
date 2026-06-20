@@ -188,7 +188,10 @@ class _Visitor(ast.NodeVisitor):
                     # e.g. self.<func.name>(...)
                     calls_self = True
         if has_llm and calls_self:
-            arg_names = {a.arg for a in func.args.args}
+            a = func.args
+            # Include positional-only, positional-or-keyword, and keyword-only
+            # args so a depth/limit passed any of those ways is recognised.
+            arg_names = {x.arg for x in (a.posonlyargs + a.args + a.kwonlyargs)}
             if not (arg_names & _BOUND_NAMES):
                 self.risks.append(Risk(
                     severity="CRITICAL",
