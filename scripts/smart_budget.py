@@ -274,6 +274,12 @@ class SmartBudgetManager:
             # (priced per token, like chat) as a cheaper chat alternative.
             if info.unit != current.unit or info.mode != current.mode:
                 continue
+            # Skip miscategorised non-chat generators and no-price rows.
+            import optimized_calculator
+            if optimized_calculator._looks_non_chat(slug):
+                continue
+            if info.input_per_1m <= 0 or info.output_per_1m <= 0:
+                continue
             new_cost_per_1M = info.input_per_1m + info.output_per_1m
             savings_percent = (
                 (current_cost_per_1M - new_cost_per_1M) / current_cost_per_1M * 100

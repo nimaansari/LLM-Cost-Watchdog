@@ -27,6 +27,12 @@ class TestAlternativesMode(unittest.TestCase):
                 p.mode, "chat",
                 f"{s!r} (mode={p.mode}) should not be offered as a chat alternative",
             )
+            self.assertFalse(
+                oc._looks_non_chat(s),
+                f"{s!r} looks like a non-chat generator (miscategorised upstream)",
+            )
+            self.assertGreater(p.output_per_1m, 0,
+                               f"{s!r} has no output price — likely bad data")
 
     def test_optimized_calculator_only_same_mode(self):
         alts = oc.find_cheaper_alternatives("claude-sonnet-4-6", 100000, 20000, 0.5)
